@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Weather Station Reports self-check</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    body { max-width: 52rem; margin: 2rem auto; padding: 0 1rem; }
+    pre { white-space: pre-wrap; }
+    .score { font-size: 3rem; }
+  </style>
+</head>
+<body>
+  <h1>Weather Station Reports self-check</h1>
+  <p>Upload your <code>.ipynb</code> file to see the score the autograder would give it. Grading happens in your browser; the file is not sent anywhere.</p>
+  <p>This shows your score for the 9 functions + setup check (16 pts). The bug log (4 pts) is graded separately and isn't shown here.</p>
+
+  <p id="status">Loading Python (about 10 MB, one time)&hellip;</p>
+
+  <input type="file" id="file" accept=".ipynb" class="form-control" disabled>
+
+  <div id="result" hidden>
+    <p class="score mt-4"><span id="total"></span> / <span id="max"></span></p>
+    <table class="table">
+      <thead><tr><th>Item</th><th>Points</th></tr></thead>
+      <tbody id="items"></tbody>
+    </table>
+    <details>
+      <summary>Full details (expected vs. actual for every check)</summary>
+      <pre id="feedback"></pre>
+    </details>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.js"></script>
+  <script>
+    const status = document.getElementById("status");
+    const fileInput = document.getElementById("file");
+
+    // Students' notebooks may `import requests` outside the
+    // get_weather_reports cell. The grader replaces get_weather_reports
+    // with a stub, so a fake requests module is enough to keep the
+    // import from failing.
+    const bootstrap = `
+import sys, types
+fake = types.ModuleType("requests")
+def _no_network(*a, **k):
+    raise RuntimeError("Network access is not available in the self-check page")
+fake.get = _no_network
+fake.post = _no_network
+sys.modules["requests"] = fake
+`;
+
+    let pyodide;
+
+    async function init() {
+      try {
+        pyodide = await loadPyodide();
+        const resp = await fetch("grading_core.py");
+        if (!resp.ok) throw new Error(`could not load grading_core.py (${resp.status})`);
+        const core = await resp.text();
+        pyodide.runPython(bootstrap);
+        pyodide.runPython(core);
+        status.textContent = "Ready.";
+        fileInput.disabled = false;
+      } catch (e) {
+        status.textContent = `The grader failed to load: ${e.message}. Reload the page to try again.`;
+      }
+    }
+
+    function show(result) {
+      document.getElementById("total").textContent = result.total_text;
+      document.getElementById("max").textContent = result.max_points;
+      const tbody = document.getElementById("items");
+      tbody.innerHTML = "";
+      for (const item of result.items) {
+        const tr = document.createElement("tr");
+        tr.className = item.marker === "PASS" ? "" : (item.marker === "PARTIAL" ? "table-warning" : "table-danger");
+        const td1 = document.createElement("td");
+        td1.textContent = item.label;
+        const td2 = document.createElement("td");
+        td2.textContent = `${item.points} / ${item.max}`;
+        tr.append(td1, td2);
+        tbody.appendChild(tr);
+      }
+      document.getElementById("feedback").textContent = result.feedback;
+      document.getElementById("result").hidden = false;
+    }
+
+    fileInput.addEventListener("change", async () => {
+      const file = fileInput.files[0];
+      if (!file) return;
+      status.textContent = `Grading ${file.name}\u2026`;
+      document.getElementById("result").hidden = true;
+      try {
+        const text = await file.text();
+        pyodide.globals.set("_nb_text", text);
+        pyodide.globals.set("_nb_name", file.name);
+        const json = pyodide.runPython(`
+import json
+_nb = json.loads(_nb_text)
+_r = grade_notebook(_nb, _nb_name)
+json.dumps({
+    "total_text": fmt_points(_r["total"]),
+    "max_points": MAX_POINTS,
+    "items": [
+        {"label": i["label"], "points": fmt_points(i["points_earned"]), "max": i["max_points"], "marker": item_marker(i)}
+        for i in _r["item_results"]
+    ],
+    "feedback": "\\n".join(feedback_lines(_r)),
+})
+`);
+        show(JSON.parse(json));
+        status.textContent = `Graded ${file.name}.`;
+      } catch (e) {
+        status.textContent = `Could not grade ${file.name}: ${e.message}`;
+      }
+      fileInput.value = "";
+    });
+
+    init();
+  </script>
+</body>
+</html>
